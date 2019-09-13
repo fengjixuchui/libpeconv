@@ -58,10 +58,10 @@ bool sections_virtual_to_raw(BYTE* payload, SIZE_T payload_size, OUT BYTE* destA
         size_t new_end = sec_size + next_sec->PointerToRawData;
         if (new_end > raw_end) raw_end = new_end;
 
-        if (next_sec->VirtualAddress + sec_size > payload_size) {
+        if ((next_sec->VirtualAddress + sec_size) > payload_size) {
             std::cerr << "[!] Virtual section size is out ouf bounds: " << std::hex << sec_size << std::endl;
-            sec_size = SIZE_T(payload_size - next_sec->VirtualAddress);
-            std::cerr << "[!] Truncated to maximal size: " << std::hex <<  sec_size << std::endl;
+            sec_size = (payload_size > next_sec->VirtualAddress) ? SIZE_T(payload_size - next_sec->VirtualAddress) : 0;
+            std::cerr << "[!] Truncated to maximal size: " << std::hex << sec_size << ", buffer size: " << payload_size << std::endl;
         }
         if (next_sec->VirtualAddress > payload_size && sec_size != 0) {
             std::cerr << "[-] VirtualAddress of section is out ouf bounds: " << std::hex << next_sec->VirtualAddress << std::endl;
@@ -93,7 +93,13 @@ bool sections_virtual_to_raw(BYTE* payload, SIZE_T payload_size, OUT BYTE* destA
     return true;
 }
 
-BYTE* peconv::pe_virtual_to_raw(BYTE* payload, size_t in_size, ULONGLONG loadBase, size_t &out_size, bool rebuffer)
+BYTE* peconv::pe_virtual_to_raw(
+    IN BYTE* payload,
+    IN size_t in_size,
+    IN ULONGLONG loadBase,
+    OUT size_t &out_size,
+    IN OPTIONAL bool rebuffer
+)
 {
     BYTE* in_buf = payload;
     if (rebuffer) {
@@ -136,7 +142,12 @@ BYTE* peconv::pe_virtual_to_raw(BYTE* payload, size_t in_size, ULONGLONG loadBas
     return out_buf;
 }
 
-BYTE* peconv::pe_realign_raw_to_virtual(const BYTE* payload, size_t in_size, ULONGLONG loadBase, size_t &out_size)
+BYTE* peconv::pe_realign_raw_to_virtual(
+    IN const BYTE* payload,
+    IN size_t in_size,
+    IN ULONGLONG loadBase,
+    OUT size_t &out_size
+)
 {
     BYTE* out_buf = (BYTE*)alloc_pe_buffer(in_size, PAGE_READWRITE);
     if (!out_buf) return nullptr;

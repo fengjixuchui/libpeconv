@@ -10,7 +10,7 @@
 
 using namespace peconv;
 
-t_pe_dump_mode peconv::detect_dump_mode(const BYTE * buffer, size_t mod_size)
+t_pe_dump_mode peconv::detect_dump_mode(IN const BYTE* buffer, IN size_t mod_size)
 {
     t_pe_dump_mode dump_mode = peconv::PE_DUMP_UNMAP;
     if (peconv::is_pe_raw(buffer, mod_size)) {
@@ -22,11 +22,11 @@ t_pe_dump_mode peconv::detect_dump_mode(const BYTE * buffer, size_t mod_size)
     return peconv::PE_DUMP_UNMAP;
 }
 
-bool peconv::dump_pe(const char *out_path,
-    BYTE *buffer, size_t mod_size,
-    const ULONGLONG start_addr,
-    t_pe_dump_mode &dump_mode,
-    peconv::ExportsMapper* exportsMap
+bool peconv::dump_pe(IN const char *out_path,
+    IN OUT BYTE *buffer, IN size_t mod_size,
+    IN const ULONGLONG start_addr,
+    IN OUT t_pe_dump_mode &dump_mode,
+    IN OPTIONAL const peconv::ExportsMapper* exportsMap
 )
 {
     // if the exportsMap is supplied, attempt to recover the (destroyed) import table:

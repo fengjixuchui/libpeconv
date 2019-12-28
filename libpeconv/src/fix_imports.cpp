@@ -56,7 +56,7 @@ std::set<std::string> get_all_dlls_exporting_function(ULONGLONG func_addr, const
     //2. Iterate through their DLL names and add them to a set:
     for (std::set<ExportedFunc>::iterator strItr = exports_for_va->begin();
         strItr != exports_for_va->end();
-        strItr++)
+        ++strItr)
     {
         currDllNames.insert(strItr->libName);
     }
@@ -84,7 +84,7 @@ std::string find_covering_dll(std::set<ULONGLONG> &addresses, const peconv::Expo
     // so, they should be processed at the end
     std::set<ULONGLONG>::iterator addrItr;
 
-    for (addrItr = addresses.begin(); addrItr != addresses.end(); addrItr++) {
+    for (addrItr = addresses.begin(); addrItr != addresses.end(); ++addrItr) {
         ULONGLONG searchedAddr = *addrItr;
         //---
         // 1. Find all the DLLs exporting this particular function (can be forwarded etc)
@@ -145,7 +145,7 @@ size_t map_addresses_to_functions(std::set<ULONGLONG> &addresses,
 {
     std::set<ULONGLONG> coveredAddresses;
     std::set<ULONGLONG>::iterator addrItr;
-    for (addrItr = addresses.begin(); addrItr != addresses.end(); addrItr++) {
+    for (addrItr = addresses.begin(); addrItr != addresses.end(); ++addrItr) {
 
         ULONGLONG searchedAddr = *addrItr;
 
@@ -162,7 +162,7 @@ size_t map_addresses_to_functions(std::set<ULONGLONG> &addresses,
 
         for (std::set<ExportedFunc>::iterator strItr = exports_for_va->begin(); 
             strItr != exports_for_va->end(); 
-            strItr++)
+            ++strItr)
         {
             std::string dll_name = strItr->libName;
             if (dll_name != chosenDll) {

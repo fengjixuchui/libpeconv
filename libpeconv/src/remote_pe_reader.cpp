@@ -92,7 +92,6 @@ size_t read_remote_region(HANDLE processHandle, BYTE *start_addr, OUT BYTE* buff
     if (buffer == nullptr) {
         return 0;
     }
-    MEMORY_BASIC_INFORMATION page_info = { 0 };
     size_t region_size = peconv::fetch_region_size(processHandle, start_addr);
     if (region_size == 0) return false;
 
@@ -142,7 +141,7 @@ bool peconv::read_remote_pe_header(HANDLE processHandle, BYTE *start_addr, OUT B
     const size_t min_size = nt_offset + nt_size;
 
     if (read_size < min_size) {
-        std::cerr << "[-] [" << std::dec << GetProcessId(processHandle) 
+        std::cerr << "[-] [" << std::dec << get_process_id(processHandle) 
             << " ][" << std::hex << (ULONGLONG) start_addr 
             << "] Read size: " << std::hex << read_size 
             << " is smaller that the minimal size:" << get_hdrs_size(buffer) 

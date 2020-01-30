@@ -19,6 +19,7 @@ set (srcs
 	test_replacing_func.cpp
 	test_delayed_imps.cpp
 	test_imp_list.cpp
+	test_hooking_local.cpp
 )
 
 set (hdrs
@@ -31,6 +32,7 @@ set (hdrs
 	test_replacing_func.h
 	test_delayed_imps.h
 	test_imp_list.h
+	test_hooking_local.h
 	resource.h
 	shellcodes.h
 )
@@ -99,3 +101,8 @@ endif()
 add_test (TestDelayedImps tests 9 "C://tests//test_case4.exe")
 set_tests_properties (TestDelayedImps PROPERTIES PASS_REGULAR_EXPRESSION "Hooking test passed")
 set_tests_properties (TestDelayedImps PROPERTIES FAIL_REGULAR_EXPRESSION "Failed")
+
+# 11) test redirecting local functions (and undoing the redirection)
+add_test (TestLocalRedirect tests 11 )
+set_tests_properties (TestLocalRedirect PROPERTIES PASS_REGULAR_EXPRESSION "Test passed")
+set_tests_properties (TestLocalRedirect PROPERTIES FAIL_REGULAR_EXPRESSION "Failed")

@@ -18,7 +18,7 @@ FARPROC peconv::hooking_func_resolver::resolve_func(LPSTR lib_name, LPSTR func_n
     return peconv::default_func_resolver::resolve_func(lib_name, func_name);
 }
 
-size_t peconv::redirect_to_local64(void *ptr, ULONGLONG new_offset)
+size_t peconv::redirect_to_local64(void *ptr, ULONGLONG new_offset, PatchBackup* backup)
 {
     if (!ptr) return 0;
 
@@ -27,12 +27,29 @@ size_t peconv::redirect_to_local64(void *ptr, ULONGLONG new_offset)
         0xFF, 0xE0 //jmp rax
     };
     const size_t hook64_size = sizeof(hook_64);
+    if (ptr == VirtualProtect) {
+        return 0; //do not allow to hook VirtualProtect
+    }
+    DWORD oldProtect = 0;
+    if (!VirtualProtect((LPVOID)ptr,
+        hook64_size,
+        PAGE_EXECUTE_READWRITE, //this must be executable if we are hooking kernel32.dll, because we are using VirtualProtect from kernel32 at the same time
+        &oldProtect))
+    {
+        return 0;
+    }
+
+    if (backup != nullptr) {
+        backup->makeBackup((BYTE*)ptr, hook64_size);
+    }
     memcpy(hook_64 + 2, &new_offset, sizeof(ULONGLONG));
     memcpy(ptr, hook_64, hook64_size);
+
+    VirtualProtect((LPVOID)ptr, hook64_size, oldProtect, &oldProtect);
     return hook64_size;
 }
 
-size_t peconv::redirect_to_local32(void *ptr, DWORD new_offset)
+size_t peconv::redirect_to_local32(void *ptr, DWORD new_offset, PatchBackup* backup)
 {
     if (!ptr) return 0;
 
@@ -41,8 +58,25 @@ size_t peconv::redirect_to_local32(void *ptr, DWORD new_offset)
         0xFF, 0xE0 //jmp eax
     };
     const size_t hook32_size = sizeof(hook_32);
+    if (ptr == VirtualProtect) {
+        return 0; //do not allow to hook VirtualProtect
+    }
+    DWORD oldProtect = 0;
+    if (!VirtualProtect((LPVOID)ptr,
+        hook32_size,
+        PAGE_EXECUTE_READWRITE, //this must be executable if we are hooking kernel32.dll, because we are using VirtualProtect from kernel32 at the same time
+        &oldProtect))
+    {
+        return 0;
+    }
+
+    if (backup != nullptr) {
+        backup->makeBackup((BYTE*)ptr, hook32_size);
+    }
     memcpy(hook_32 + 1, &new_offset, sizeof(DWORD));
     memcpy(ptr, hook_32, hook32_size);
+
+    VirtualProtect((LPVOID)ptr, hook32_size, oldProtect, &oldProtect);
     return hook32_size;
 }
 

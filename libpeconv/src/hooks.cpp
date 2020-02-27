@@ -1,5 +1,6 @@
 #include "peconv\hooks.h"
 #include "peconv.h"
+#include "peconv\peb_lookup.h"
 
 using namespace peconv;
 
@@ -7,7 +8,7 @@ namespace peconv {
 
     bool is_pointer_in_ntdll(LPVOID lpAddress)
     {
-        HMODULE mod = GetModuleHandle("ntdll.dll");
+        HMODULE mod = get_module_via_peb(L"ntdll.dll");
         size_t module_size = peconv::get_image_size((BYTE*)mod);
         if (peconv::validate_ptr(mod, module_size, lpAddress, sizeof(BYTE))) {
             return true; //this address lies within NTDLL
@@ -17,7 +18,10 @@ namespace peconv {
 
     BOOL nt_protect(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect)
     {
-        FARPROC proc = GetProcAddress(GetModuleHandle("ntdll.dll"), "NtProtectVirtualMemory");
+        FARPROC proc = peconv::get_exported_func(
+            peconv::get_module_via_peb(L"ntdll.dll"),
+            "NtProtectVirtualMemory"
+        );
         if (!proc) {
             return FALSE;
         }
@@ -68,6 +72,9 @@ bool PatchBackup::applyBackup()
     }
     memcpy(sourcePtr, buffer, bufferSize);
     nt_protect((LPVOID)sourcePtr, bufferSize, oldProtect, &oldProtect);
+
+    //flush cache:
+    FlushInstructionCache(GetCurrentProcess(), sourcePtr, bufferSize);
     return true;
 }
 
@@ -116,6 +123,9 @@ size_t peconv::redirect_to_local64(void *ptr, ULONGLONG new_offset, PatchBackup*
     memcpy(ptr, hook_64, hook64_size);
 
     nt_protect((LPVOID)ptr, hook64_size, oldProtect, &oldProtect);
+
+    //flush cache:
+    FlushInstructionCache(GetCurrentProcess(), ptr, hook64_size);
     return hook64_size;
 }
 
@@ -148,6 +158,9 @@ size_t peconv::redirect_to_local32(void *ptr, DWORD new_offset, PatchBackup* bac
     memcpy(ptr, hook_32, hook32_size);
 
     nt_protect((LPVOID)ptr, hook32_size, oldProtect, &oldProtect);
+
+    //flush cache:
+    FlushInstructionCache(GetCurrentProcess(), ptr, hook32_size);
     return hook32_size;
 }
 
@@ -202,6 +215,9 @@ bool peconv::replace_target(BYTE *patch_ptr, ULONGLONG dest_addr)
         }
         DWORD delta_dw = DWORD(delta);
         memcpy(patch_ptr + 1, &delta_dw, sizeof(DWORD));
+
+        //flush cache:
+        FlushInstructionCache(GetCurrentProcess(), patch_ptr + 1, sizeof(DWORD));
         return true;
     }
     return false;

@@ -90,9 +90,12 @@ bool is_wanted_module(LPWSTR curr_name, LPWSTR wanted_name)
     return true;
 }
 
-HMODULE peconv::get_module_via_peb(LPWSTR module_name)
+HMODULE peconv::get_module_via_peb(IN OPTIONAL LPWSTR module_name)
 {
     PLDR_MODULE curr_module = get_ldr_module();
+    if (!module_name) {
+        return (HMODULE)(curr_module->BaseAddress);
+    }
     while (curr_module != NULL && curr_module->BaseAddress != NULL) {
         if (is_wanted_module(curr_module->BaseDllName.Buffer, module_name)) {
             return (HMODULE)(curr_module->BaseAddress);
@@ -100,4 +103,19 @@ HMODULE peconv::get_module_via_peb(LPWSTR module_name)
         curr_module = (PLDR_MODULE) curr_module->InLoadOrderModuleList.Flink;
     }
     return NULL;
+}
+
+size_t peconv::get_module_size_via_peb(IN OPTIONAL HMODULE hModule)
+{
+    PLDR_MODULE curr_module = get_ldr_module();
+    if (!hModule) {
+        return (size_t)(curr_module->SizeOfImage);
+    }
+    while (curr_module != NULL && curr_module->BaseAddress != NULL) {
+        if (hModule == (HMODULE)(curr_module->BaseAddress)) {
+            return (size_t)(curr_module->SizeOfImage);
+        }
+        curr_module = (PLDR_MODULE)curr_module->InLoadOrderModuleList.Flink;
+    }
+    return 0;
 }

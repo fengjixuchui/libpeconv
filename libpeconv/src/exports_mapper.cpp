@@ -2,7 +2,34 @@
 #include <algorithm>
 #include <iostream>
 
+
 using namespace peconv;
+
+void ExportsMapper::print_va_to_func(std::stringstream &stream)
+{
+    std::map<ULONGLONG, std::set<ExportedFunc>>::const_iterator itr;
+
+    for (itr = va_to_func.begin(); itr != va_to_func.end(); itr++) {
+        
+        stream << std::hex << itr->first << " :\n";
+
+        std::set<ExportedFunc>::const_iterator itr2;
+        const std::set<ExportedFunc> &funcs = itr->second;
+
+        for (itr2 = funcs.begin(); itr2 != funcs.end(); itr2++) {
+            stream << "\t" << itr2->toString() << "\n";
+        }
+    }
+}
+
+void ExportsMapper::print_func_to_va(std::stringstream &stream)
+{
+    std::map<ExportedFunc, ULONGLONG>::const_iterator itr;
+    for (itr = func_to_va.begin(); itr != func_to_va.end(); itr++) {
+        stream << itr->first.toString() << " : "
+            << std::hex << itr->second << "\n";
+    }
+}
 
 ULONGLONG rebase_va(ULONGLONG va, ULONGLONG currBase, ULONGLONG targetBase)
 {
@@ -55,18 +82,19 @@ size_t ExportsMapper::resolve_forwarders(const ULONGLONG va, ExportedFunc &currF
         std::set<ExportedFunc>::iterator sItr;
         for (sItr = fItr->second.begin(); sItr != fItr->second.end(); ++sItr) {
             //printf("-> %s\n", sItr->c_str());
-            va_to_func[va].insert(*sItr);
-            func_to_va[*sItr] = va;
+            associateVaAndFunc(va, *sItr);
             resolved++;
         }
     }
     return resolved;
 }
 
-bool ExportsMapper::add_forwarded(PBYTE fPtr, ExportedFunc &currFunc)
+bool ExportsMapper::add_forwarded(ExportedFunc &currFunc, DWORD callRVA, PBYTE modulePtr, size_t moduleSize)
 {
-    if (fPtr == nullptr) return false;
-
+    PBYTE fPtr = modulePtr + callRVA;
+    if (!peconv::validate_ptr(modulePtr, moduleSize, fPtr, 1)) {
+        return false;
+    }
     if (peconv::forwarder_name_len(fPtr) < 1) {
         return false; //not forwarded
     }
@@ -86,8 +114,7 @@ bool ExportsMapper::add_forwarded(PBYTE fPtr, ExportedFunc &currFunc)
 
     if (func_to_va[forwarder] != 0) {
         ULONGLONG va = func_to_va[forwarder];
-        va_to_func[va].insert(currFunc);
-        func_to_va[currFunc] = va;
+        associateVaAndFunc(va, currFunc);
     }
     return true;
 }
@@ -106,8 +133,7 @@ DWORD get_ordinal(PDWORD recordPtr, std::map<PDWORD, DWORD> &va_to_ord)
 
 bool ExportsMapper::add_to_maps(ULONGLONG va, ExportedFunc &currFunc)
 {
-    va_to_func[va].insert(currFunc);
-    func_to_va[currFunc] = va;
+    associateVaAndFunc(va, currFunc);
     resolve_forwarders(va, currFunc);
     return true;
 }
@@ -135,6 +161,28 @@ bool is_valid_export_table(IMAGE_EXPORT_DIRECTORY* exp, HMODULE modulePtr, const
     return true;
 }
 
+ExportsMapper::ADD_FUNC_RES ExportsMapper::add_function_to_lookup(HMODULE modulePtr, ULONGLONG moduleBase, size_t moduleSize, ExportedFunc &currFunc, DWORD callRVA)
+{
+    if (add_forwarded(currFunc, callRVA, (BYTE*)modulePtr, moduleSize)) {
+#ifdef _DEBUG
+        char* fPtr = (char*)modulePtr + callRVA;
+        std::cout << "FWD " << currFunc.toString() << " -> " << fPtr << "\n";
+#endif
+        return ExportsMapper::RES_FORWARDED;
+    }
+
+    ULONGLONG callVa = callRVA + moduleBase;
+    if (!peconv::validate_ptr((BYTE*)moduleBase, moduleSize, (BYTE*)callVa, sizeof(ULONGLONG))) {
+        // this may happen when the function was forwarded and it is already filled
+#ifdef _DEBUG
+        std::cout << "Validation failed:  " << currFunc.toString() << "\n";
+#endif
+        return ExportsMapper::RES_INVALID;
+    }
+    //not forwarded, simple case:
+    add_to_maps(callVa, currFunc);
+    return ExportsMapper::RES_MAPPED;
+}
 
 size_t ExportsMapper::add_to_lookup(std::string moduleName, HMODULE modulePtr, ULONGLONG moduleBase)
 {
@@ -175,47 +223,29 @@ size_t ExportsMapper::add_to_lookup(std::string moduleName, HMODULE modulePtr, U
             //skip if the function RVA is 0 (empty export)
             continue;
         }
-        DWORD funcOrd = get_ordinal(funcRVA, va_to_ord);
 
-        DWORD callRVA = *funcRVA;
         LPSTR name = (LPSTR)(*nameRVA + (BYTE*) modulePtr);
-        if (!peconv::validate_ptr(modulePtr, module_size, name, sizeof(char))) return 0;
+        if (!peconv::validate_ptr(modulePtr, module_size, name, sizeof(char))) break;
+
+        DWORD funcOrd = get_ordinal(funcRVA, va_to_ord);
+        DWORD callRVA = *funcRVA;
         ExportedFunc currFunc(dllName, name, funcOrd);
 
-        BYTE* fPtr = (BYTE*) modulePtr + callRVA;
-        ULONGLONG callVa = rebase_va((ULONGLONG) fPtr, (ULONGLONG)modulePtr, moduleBase);
-        if (!peconv::validate_ptr((BYTE*) moduleBase, module_size, (BYTE*)callVa, sizeof(ULONGLONG))) {
-            break;
-        }
-        if (add_forwarded(fPtr, currFunc)) {
-            forwarded_ctr++;
-        } else {
-            //not forwarded, simple case:
-            add_to_maps(callVa, currFunc);
-            mapped_ctr++;
-        }
+        int res = add_function_to_lookup(modulePtr, moduleBase, module_size, currFunc, callRVA);
+        if (res == ExportsMapper::RES_FORWARDED) forwarded_ctr++;
+        if (res == ExportsMapper::RES_MAPPED) mapped_ctr++;
     }
     //go through unnamed functions exported by ordinals:
     std::map<PDWORD, DWORD>::iterator ord_itr = va_to_ord.begin();
     for (;ord_itr != va_to_ord.end(); ++ord_itr) {
 
-        ExportedFunc currFunc(dllName, ord_itr->second);
-
         DWORD* funcRVA = ord_itr->first;
         DWORD callRVA = *funcRVA;
+        ExportedFunc currFunc(dllName, ord_itr->second);
 
-        PBYTE fPtr = (PBYTE) modulePtr + callRVA;
-        ULONGLONG callVa = rebase_va((ULONGLONG) fPtr, (ULONGLONG)modulePtr, moduleBase);
-        if (!peconv::validate_ptr((BYTE*) moduleBase, module_size, (BYTE*)callVa, sizeof(ULONGLONG))) {
-            break;
-        }
-        if (add_forwarded(fPtr, currFunc)) {
-            forwarded_ctr++;
-        } else {
-            //std::cout << std::hex << callVa << " : " << currFunc.toString() << std::endl;
-            add_to_maps(callVa, currFunc);
-            mapped_ctr++;
-        }
+        int res = add_function_to_lookup(modulePtr, moduleBase, module_size, currFunc, callRVA);
+        if (res == ExportsMapper::RES_FORWARDED) forwarded_ctr++;
+        if (res == ExportsMapper::RES_MAPPED) mapped_ctr++;
     }
 #ifdef _DEBUG
     std::cout << "Finished exports parsing, mapped: "<< mapped_ctr << " forwarded: " << forwarded_ctr  << std::endl;

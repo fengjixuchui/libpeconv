@@ -20,6 +20,7 @@ set (srcs
 	test_delayed_imps.cpp
 	test_imp_list.cpp
 	test_hooking_local.cpp
+	test_peb_lookup.cpp
 )
 
 set (hdrs
@@ -33,6 +34,7 @@ set (hdrs
 	test_delayed_imps.h
 	test_imp_list.h
 	test_hooking_local.h
+	test_peb_lookup.h
 	resource.h
 	shellcodes.h
 )
@@ -104,5 +106,10 @@ set_tests_properties (TestDelayedImps PROPERTIES FAIL_REGULAR_EXPRESSION "Failed
 
 # 11) test redirecting local functions (and undoing the redirection)
 add_test (TestLocalRedirect tests 11 )
+set_tests_properties (TestLocalRedirect PROPERTIES PASS_REGULAR_EXPRESSION "Test passed")
+set_tests_properties (TestLocalRedirect PROPERTIES FAIL_REGULAR_EXPRESSION "Failed")
+
+# 12) test PEB lookup
+add_test (TestPEBLookup tests 12 )
 set_tests_properties (TestLocalRedirect PROPERTIES PASS_REGULAR_EXPRESSION "Test passed")
 set_tests_properties (TestLocalRedirect PROPERTIES FAIL_REGULAR_EXPRESSION "Failed")

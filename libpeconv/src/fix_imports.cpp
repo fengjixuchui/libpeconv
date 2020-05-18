@@ -126,7 +126,9 @@ bool ImportedDllCoverage::findCoveringDll()
 {
     std::string found_name = find_covering_dll(this->addresses, this->exportsMap);
     if (found_name.length() == 0) {
+#ifdef _DEBUG
         std::cerr << "Cannot find a covering DLL" << std::endl;
+#endif
         return false;
     }
     this->dllName = found_name;
@@ -157,8 +159,6 @@ size_t map_addresses_to_functions(std::set<ULONGLONG> &addresses,
 #endif
             continue;
         }
-
-        std::set<std::string> currDllNames;
 
         for (std::set<ExportedFunc>::iterator strItr = exports_for_va->begin(); 
             strItr != exports_for_va->end(); 
@@ -203,6 +203,15 @@ size_t ImportedDllCoverage::mapAddressesToFunctions(const std::string &dll)
 #endif
     return coveredCount;
 }
+
+void ImpsNotCovered::insert(ULONGLONG thunk, ULONGLONG searchedAddr)
+{
+#ifdef _DEBUG
+    std::cerr << "[-] Function not recovered: [" << std::hex << searchedAddr << "] " << std::endl;
+#endif
+    thunkToAddr[thunk] = searchedAddr;
+}
+
 
 bool peconv::fix_imports(IN OUT PVOID modulePtr, IN size_t moduleSize, IN const peconv::ExportsMapper& exportsMap, OUT OPTIONAL peconv::ImpsNotCovered* notCovered)
 {

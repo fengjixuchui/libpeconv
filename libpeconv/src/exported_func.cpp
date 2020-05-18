@@ -1,4 +1,4 @@
-#include "peconv\exported_func.h"
+#include "peconv/exported_func.h"
 
 #include <algorithm>
 #include <sstream>
@@ -11,7 +11,7 @@ std::string peconv::get_dll_shortname(const std::string& str)
 {
     std::size_t len = str.length();
     std::size_t found = str.find_last_of("/\\");
-    std::size_t ext = str.find_last_of(".");
+    std::size_t ext = str.find_last_of('.');
     if (ext >= len) return "";
 
     std::string name = str.substr(found+1, ext - (found+1));

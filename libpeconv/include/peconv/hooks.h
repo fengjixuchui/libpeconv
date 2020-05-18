@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <Windows.h>
+#include <windows.h>
 #include "function_resolver.h"
 
 #include <iostream>
@@ -24,7 +24,7 @@ namespace peconv {
         Creates an empty backup.
         */
         PatchBackup()
-            : buffer(nullptr), bufferSize(0)
+            : buffer(nullptr), bufferSize(0), sourcePtr(nullptr)
         {
         }
 

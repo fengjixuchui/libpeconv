@@ -10,7 +10,7 @@ using namespace peconv;
 
 bool sections_virtual_to_raw(BYTE* payload, SIZE_T payload_size, OUT BYTE* destAddress, OUT SIZE_T *raw_size_ptr)
 {
-    if (payload == NULL) return false;
+    if (!payload || !destAddress) return false;
 
     bool is64b = is64bit(payload);
 
@@ -112,14 +112,19 @@ BYTE* peconv::pe_virtual_to_raw(
     IN OPTIONAL bool rebuffer
 )
 {
+    BYTE* out_buf = (BYTE*)alloc_pe_buffer(in_size, PAGE_READWRITE);
+    if (out_buf == NULL) return NULL; //could not allocate output buffer
+
     BYTE* in_buf = payload;
     if (rebuffer) {
         in_buf = (BYTE*) alloc_pe_buffer(in_size, PAGE_READWRITE);
-        if (in_buf == NULL) return NULL;
+        if (in_buf == NULL) {
+            free_pe_buffer(out_buf, in_size);
+            return NULL;
+        }
         memcpy(in_buf, payload, in_size);
     }
 
-    BYTE* out_buf = (BYTE*) alloc_pe_buffer(in_size, PAGE_READWRITE);
     ULONGLONG oldBase = get_image_base(in_buf);
     bool isOk = true;
     // from the loadBase go back to the original base
@@ -160,16 +165,18 @@ BYTE* peconv::pe_realign_raw_to_virtual(
     OUT size_t &out_size
 )
 {
-    BYTE* out_buf = (BYTE*)alloc_pe_buffer(in_size, PAGE_READWRITE);
-    if (!out_buf) return nullptr;
-
-    memcpy(out_buf, payload, in_size);
     out_size = in_size;
+    BYTE* out_buf = (BYTE*)alloc_pe_buffer(out_size, PAGE_READWRITE);
+    if (!out_buf) {
+        out_size = 0;
+        return nullptr;
+    }
+    memcpy(out_buf, payload, in_size);
 
     ULONGLONG oldBase = get_image_base(out_buf);
     bool isOk = true;
     // from the loadBase go back to the original base
-    if (!relocate_module(out_buf, in_size, oldBase, loadBase)) {
+    if (!relocate_module(out_buf, out_size, oldBase, loadBase)) {
         //Failed relocating the module! Changing image base instead...
         if (!update_image_base(out_buf, (ULONGLONG)loadBase)) {
             std::cerr << "[-] Failed relocating the module!" << std::endl;
@@ -187,9 +194,9 @@ BYTE* peconv::pe_realign_raw_to_virtual(
         isOk = false;
     }
     //set Raw pointers and sizes of the sections same as Virtual
-    size_t sections_count = peconv::get_sections_count(out_buf, in_size);
+    size_t sections_count = peconv::get_sections_count(out_buf, out_size);
     for (size_t i = 0; i < sections_count; i++) {
-        PIMAGE_SECTION_HEADER sec = peconv::get_section_hdr(out_buf, in_size, i);
+        PIMAGE_SECTION_HEADER sec = peconv::get_section_hdr(out_buf, out_size, i);
         if (!sec) break;
 
         sec->Misc.VirtualSize = peconv::get_virtual_sec_size(out_buf, sec, true);
@@ -198,7 +205,7 @@ BYTE* peconv::pe_realign_raw_to_virtual(
     }
     //!---
     if (!isOk) {
-        free_pe_buffer(out_buf, in_size);
+        free_pe_buffer(out_buf);
         out_buf = nullptr;
         out_size = 0;
     }

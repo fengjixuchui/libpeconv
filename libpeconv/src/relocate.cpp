@@ -37,8 +37,31 @@ protected:
     ULONGLONG newBase;
 };
 
+bool is_empty_reloc_block(BASE_RELOCATION_ENTRY *block, SIZE_T entriesNum, DWORD page, PVOID modulePtr, SIZE_T moduleSize)
+{
+    if (entriesNum == 0) {
+        return true; // nothing to process
+    }
+    BASE_RELOCATION_ENTRY* entry = block;
+    for (SIZE_T i = 0; i < entriesNum; i++) {
+        if (!validate_ptr(modulePtr, moduleSize, entry, sizeof(BASE_RELOCATION_ENTRY))) {
+            return false;
+        }
+        DWORD type = entry->Type;
+        if (type != 0) {
+            //non empty block found
+            return false;
+        }
+        entry = (BASE_RELOCATION_ENTRY*)((ULONG_PTR)entry + sizeof(WORD));
+    }
+    return true;
+}
+
 bool process_reloc_block(BASE_RELOCATION_ENTRY *block, SIZE_T entriesNum, DWORD page, PVOID modulePtr, SIZE_T moduleSize, bool is64bit, RelocBlockCallback *callback)
 {
+    if (entriesNum == 0) {
+        return true; // nothing to process
+    }
     BASE_RELOCATION_ENTRY* entry = block;
     SIZE_T i = 0;
     for (i = 0; i < entriesNum; i++) {
@@ -54,7 +77,6 @@ bool process_reloc_block(BASE_RELOCATION_ENTRY *block, SIZE_T entriesNum, DWORD 
             if (callback) { //print debug messages only if the callback function was set
                 printf("[-] Not supported relocations format at %d: %d\n", (int)i, (int)type);
             }
-            
             return false;
         }
         DWORD reloc_field = page + offset;
@@ -73,7 +95,7 @@ bool process_reloc_block(BASE_RELOCATION_ENTRY *block, SIZE_T entriesNum, DWORD 
         }
         entry = (BASE_RELOCATION_ENTRY*)((ULONG_PTR)entry + sizeof(WORD));
     }
-    return true;
+    return (i != 0);
 }
 
 bool peconv::process_relocation_table(IN PVOID modulePtr, IN SIZE_T moduleSize, IN RelocBlockCallback *callback)
@@ -81,11 +103,12 @@ bool peconv::process_relocation_table(IN PVOID modulePtr, IN SIZE_T moduleSize, 
     IMAGE_DATA_DIRECTORY* relocDir = peconv::get_directory_entry((const BYTE*)modulePtr, IMAGE_DIRECTORY_ENTRY_BASERELOC);
     if (relocDir == NULL) {
 #ifdef _DEBUG
-        printf("[!] WARNING: no relocation table found!\n");
+        std::cout << "[!] WARNING: no relocation table found!\n";
 #endif
         return false;
     }
     if (!validate_ptr(modulePtr, moduleSize, relocDir, sizeof(IMAGE_DATA_DIRECTORY))) {
+        std::cerr << "[!] Invalid relocDir pointer\n";
         return false;
     }
     DWORD maxSize = relocDir->Size;
@@ -95,31 +118,38 @@ bool peconv::process_relocation_table(IN PVOID modulePtr, IN SIZE_T moduleSize, 
     IMAGE_BASE_RELOCATION* reloc = NULL;
 
     DWORD parsedSize = 0;
+    DWORD validBlocks = 0;
     while (parsedSize < maxSize) {
         reloc = (IMAGE_BASE_RELOCATION*)(relocAddr + parsedSize + (ULONG_PTR)modulePtr);
         if (!validate_ptr(modulePtr, moduleSize, reloc, sizeof(IMAGE_BASE_RELOCATION))) {
-            printf("[-] Invalid address of relocations\n");
+#ifdef _DEBUG
+            std::cerr << "[-] Invalid address of relocations\n";
+#endif
             return false;
         }
-        parsedSize += reloc->SizeOfBlock;
-
         if (reloc->SizeOfBlock == 0) {
             break;
         }
-
         size_t entriesNum = (reloc->SizeOfBlock - 2 * sizeof(DWORD)) / sizeof(WORD);
         DWORD page = reloc->VirtualAddress;
 
         BASE_RELOCATION_ENTRY* block = (BASE_RELOCATION_ENTRY*)((ULONG_PTR)reloc + sizeof(DWORD) + sizeof(DWORD));
         if (!validate_ptr(modulePtr, moduleSize, block, sizeof(BASE_RELOCATION_ENTRY))) {
-            printf("[-] Invalid address of relocations block\n");
+            std::cerr << "[-] Invalid address of relocations block\n";
             return false;
         }
-        if (process_reloc_block(block, entriesNum, page, modulePtr, moduleSize, is64b, callback) == false) {
-            return false;
+        if (!is_empty_reloc_block(block, entriesNum, page, modulePtr, moduleSize)) {
+            if (process_reloc_block(block, entriesNum, page, modulePtr, moduleSize, is64b, callback)) {
+                validBlocks++;
+            }
+            else {
+                // the block was malformed
+                return false;
+            }
         }
+        parsedSize += reloc->SizeOfBlock;
     }
-    return (parsedSize != 0);
+    return (validBlocks != 0);
 }
 
 bool apply_relocations(PVOID modulePtr, SIZE_T moduleSize, ULONGLONG newBase, ULONGLONG oldBase)

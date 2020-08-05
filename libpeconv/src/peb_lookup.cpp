@@ -4,6 +4,42 @@
 #include "ntddk.h"
 
 #include "peconv/peb_lookup.h"
+#include <iostream>
+
+class PEBFastLocker {
+public:
+    PEBFastLocker(PEB &_peb)
+        : peb(_peb)
+    {
+        RtlEnterCriticalSection(peb.FastPebLock);
+    }
+
+    ~PEBFastLocker()
+    {
+        RtlLeaveCriticalSection(peb.FastPebLock);
+    }
+
+protected:
+    PEB &peb;
+};
+
+class PEBLoaderLocker {
+public:
+    PEBLoaderLocker(PEB &_peb)
+        : peb(_peb)
+    {
+        RtlEnterCriticalSection(peb.LoaderLock);
+    }
+
+    ~PEBLoaderLocker()
+    {
+        RtlLeaveCriticalSection(peb.LoaderLock);
+}
+
+protected:
+    PEB & peb;
+};
+
 
 //here we don't want to use any functions imported form extenal modules
 
@@ -38,21 +74,11 @@ inline PPEB get_peb()
         mov PEB, eax
     };
     return (PPEB)PEB;
+
+    or:
+    LPVOID PEB = RtlGetCurrentPeb();
 */
 #endif
-}
-
-inline PLDR_MODULE get_ldr_module()
-{
-    PPEB peb = get_peb();
-    if (peb == NULL) {
-        return NULL;
-    }
-    PPEB_LDR_DATA ldr = peb->Ldr;
-    LIST_ENTRY list = ldr->InLoadOrderModuleList;
-    
-    PLDR_MODULE Flink = *( ( PLDR_MODULE * )( &list ) );
-    return Flink;
 }
 
 inline WCHAR to_lowercase(WCHAR c1)
@@ -92,30 +118,83 @@ bool is_wanted_module(LPWSTR curr_name, LPWSTR wanted_name)
 
 HMODULE peconv::get_module_via_peb(IN OPTIONAL LPWSTR module_name)
 {
-    PLDR_MODULE curr_module = get_ldr_module();
+    PPEB peb = get_peb();
+    if (!peb) {
+        return NULL;
+    }
+    PEBLoaderLocker locker(*peb);
+    LIST_ENTRY head = peb->Ldr->InLoadOrderModuleList;
+
+    const PLDR_MODULE first_module = *((PLDR_MODULE *)(&head));
+    PLDR_MODULE curr_module = first_module;
     if (!module_name) {
         return (HMODULE)(curr_module->BaseAddress);
     }
-    while (curr_module != NULL && curr_module->BaseAddress != NULL) {
+
+    // it is a cyclic list, so if the next record links to the initial one, it means we went throught the full loop
+    do {
+        // this should also work as a terminator, because the BaseAddress of the last module in the cycle is NULL
+        if (curr_module == NULL || curr_module->BaseAddress == NULL) {
+            break;
+        }
         if (is_wanted_module(curr_module->BaseDllName.Buffer, module_name)) {
             return (HMODULE)(curr_module->BaseAddress);
         }
-        curr_module = (PLDR_MODULE) curr_module->InLoadOrderModuleList.Flink;
-    }
+        curr_module = (PLDR_MODULE)curr_module->InLoadOrderModuleList.Flink;
+
+    } while (curr_module != first_module);
+
     return NULL;
 }
 
 size_t peconv::get_module_size_via_peb(IN OPTIONAL HMODULE hModule)
 {
-    PLDR_MODULE curr_module = get_ldr_module();
+    PPEB peb = get_peb();
+    if (!peb) {
+        return NULL;
+    }
+    PEBLoaderLocker locker(*peb);
+    LIST_ENTRY head = peb->Ldr->InLoadOrderModuleList;
+
+    const PLDR_MODULE first_module = *((PLDR_MODULE *)(&head));
+    PLDR_MODULE curr_module = first_module;
     if (!hModule) {
         return (size_t)(curr_module->SizeOfImage);
     }
-    while (curr_module != NULL && curr_module->BaseAddress != NULL) {
+
+    // it is a cyclic list, so if the next record links to the initial one, it means we went throught the full loop
+    do {
+        // this should also work as a terminator, because the BaseAddress of the last module in the cycle is NULL
+        if (curr_module == NULL || curr_module->BaseAddress == NULL) {
+            break;
+        }
         if (hModule == (HMODULE)(curr_module->BaseAddress)) {
             return (size_t)(curr_module->SizeOfImage);
         }
         curr_module = (PLDR_MODULE)curr_module->InLoadOrderModuleList.Flink;
-    }
+
+    } while (curr_module != first_module);
+
     return 0;
+}
+
+bool peconv::set_main_module_in_peb(HMODULE module_ptr)
+{
+    PPEB peb = get_peb();
+    if (peb == NULL) {
+        return false;
+    }
+    PEBFastLocker locker(*peb);
+    peb->ImageBaseAddress = module_ptr;
+    return true;
+}
+
+HMODULE peconv::get_main_module_via_peb()
+{
+    PPEB peb = get_peb();
+    if (peb == NULL) {
+        return NULL;
+    }
+    PEBFastLocker locker(*peb);
+    return (HMODULE) peb->ImageBaseAddress;
 }

@@ -48,43 +48,47 @@ ULONGLONG peconv::fetch_alloc_base(HANDLE processHandle, BYTE* moduleBase)
 
 size_t peconv::read_remote_memory(HANDLE processHandle, BYTE *start_addr, OUT BYTE* buffer, const size_t buffer_size, const SIZE_T step_size)
 {
-    if (buffer == nullptr) {
+    if (!buffer) {
         return 0;
     }
     memset(buffer, 0, buffer_size);
-    SIZE_T read_size = 0;
-    SIZE_T to_read_size = buffer_size;
 
-    DWORD last_error = 0;
-    while (to_read_size > 0) {
-        BOOL is_ok = ReadProcessMemory(processHandle, start_addr, buffer, to_read_size, &read_size);
-        if (!is_ok) {
-            if (read_size == 0 && (last_error != 0 && last_error != ERROR_PARTIAL_COPY)) {
+    SIZE_T read_size = 0;
+    DWORD last_error = ERROR_SUCCESS;
+
+    for (SIZE_T to_read_size = buffer_size; to_read_size > 0; to_read_size -= step_size)
+    {
+        if (ReadProcessMemory(processHandle, start_addr, buffer, to_read_size, &read_size)) {
+            break;
+        }
+        // is it not the first attempt?
+        if (last_error != ERROR_SUCCESS) {
+            if (read_size == 0 && (last_error != ERROR_PARTIAL_COPY)) {
+                last_error = GetLastError();
                 break; // no progress, break
             }
-            last_error = GetLastError();
-            if (to_read_size < step_size) {
-                break;
-            } else {
-                //try to read less
-                to_read_size -= step_size;
-                continue;
-            }
         }
-#ifdef _DEBUG
-        if (read_size < buffer_size) {
-            std::cerr << "[WARNING] Read size: " << std::hex << read_size
-                << " is smaller than the requested size: " << std::hex << buffer_size 
-                << ". Last Error: " << last_error << std::endl;
 
+        last_error = GetLastError();
+
+        if ((to_read_size < step_size) || step_size == 0) {
+            break;
         }
-#endif
-        return static_cast<size_t>(read_size);
+        //otherwise, decrease the to_read_size, and try again...
     }
+
 #ifdef _DEBUG
-    std::cerr << "[WARNING] Cannot read memory. Last Error : " << last_error << std::endl;
+    if (read_size == 0) {
+        std::cerr << "[WARNING] Cannot read memory. Last Error : " << last_error << std::endl;
+    }
+    else if (read_size < buffer_size) {
+        std::cerr << "[WARNING] Read size: " << std::hex << read_size
+            << " is smaller than the requested size: " << std::hex << buffer_size
+            << ". Last Error: " << last_error << std::endl;
+
+    }
 #endif
-    return 0;
+    return static_cast<size_t>(read_size);
 }
 
 size_t read_remote_region(HANDLE processHandle, BYTE *start_addr, OUT BYTE* buffer, const size_t buffer_size, const SIZE_T step_size)
@@ -152,7 +156,19 @@ bool peconv::read_remote_pe_header(HANDLE processHandle, BYTE *start_addr, OUT B
     return true;
 }
 
-peconv::UNALIGNED_BUF peconv::get_remote_pe_section(HANDLE processHandle, BYTE *start_addr, const size_t section_num, OUT size_t &section_size)
+namespace peconv {
+    inline size_t roundup_to_unit(size_t size, size_t unit)
+    {
+        if (unit == 0) {
+            return size;
+        }
+        size_t parts = size / unit;
+        if (size % unit) parts++;
+        return parts * unit;
+    }
+};
+
+peconv::UNALIGNED_BUF peconv::get_remote_pe_section(HANDLE processHandle, BYTE *start_addr, const size_t section_num, OUT size_t &section_size, bool roundup)
 {
     BYTE header_buffer[MAX_HEADER_SIZE] = { 0 };
 
@@ -164,6 +180,11 @@ peconv::UNALIGNED_BUF peconv::get_remote_pe_section(HANDLE processHandle, BYTE *
         return NULL;
     }
     size_t buffer_size = section_hdr->Misc.VirtualSize;
+    if (roundup) {
+        DWORD va = peconv::get_sec_alignment(header_buffer, false);
+        if (va == 0) va = PAGE_SIZE;
+        buffer_size = roundup_to_unit(section_hdr->Misc.VirtualSize, va);
+    }
     UNALIGNED_BUF module_code = peconv::alloc_unaligned(buffer_size);
     if (module_code == NULL) {
         return NULL;
@@ -187,23 +208,12 @@ size_t peconv::read_remote_pe(const HANDLE processHandle, BYTE *start_addr, cons
         std::cerr << "[-] Invalid output buffer: too small size!" << std::endl;
         return 0;
     }
-    
-    //first try to read the continuous memory area:
-    size_t read_size = read_remote_memory(processHandle, start_addr, buffer, mod_size);
-    if (read_size == mod_size) {
-        //ok, read full at once:
-        return mod_size;
-    }
-    
-    //if not possible to read full module at once, try to read it section by section:
-
+    // read PE section by section
     PBYTE hdr_buffer = buffer;
-    if (read_size < MAX_HEADER_SIZE) {
-        //try to read headers:
-        if (!read_remote_pe_header(processHandle, start_addr, hdr_buffer, MAX_HEADER_SIZE)) {
-            std::cerr << "[-] Failed to read the module header" << std::endl;
-            return 0;
-        }
+    //try to read headers:
+    if (!read_remote_pe_header(processHandle, start_addr, hdr_buffer, MAX_HEADER_SIZE)) {
+        std::cerr << "[-] Failed to read the module header" << std::endl;
+        return 0;
     }
     if (!is_valid_sections_hdr_offset(hdr_buffer, MAX_HEADER_SIZE)) {
         std::cerr << "[-] Sections headers are invalid or atypically aligned" << std::endl;
@@ -213,7 +223,7 @@ size_t peconv::read_remote_pe(const HANDLE processHandle, BYTE *start_addr, cons
 #ifdef _DEBUG
     std::cout << "Sections: " << sections_count  << std::endl;
 #endif
-    read_size = MAX_HEADER_SIZE;
+    size_t read_size = MAX_HEADER_SIZE;
 
     for (size_t i = 0; i < sections_count; i++) {
         PIMAGE_SECTION_HEADER hdr = get_section_hdr(hdr_buffer, MAX_HEADER_SIZE, i);
@@ -227,9 +237,8 @@ size_t peconv::read_remote_pe(const HANDLE processHandle, BYTE *start_addr, cons
             std::cerr << "[-] No more space in the buffer!" << std::endl;
             break;
         }
-        
         if (sec_vsize > 0 && !read_remote_memory(processHandle, start_addr + sec_va, buffer + sec_va, sec_vsize)) {
-            std::cerr << "[-] Failed to read the module section: " << i  << std::endl;
+            std::cerr << "[-] Failed to read the module section " << i <<" : at: " << std::hex << ULONG_PTR(start_addr + sec_va) << std::endl;
         }
         // update the end of the read area:
         size_t new_end = sec_va + sec_vsize;

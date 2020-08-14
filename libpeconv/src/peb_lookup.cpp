@@ -1,45 +1,23 @@
-#pragma once
-
-#include <windows.h>
 #include "ntddk.h"
 
-#include "peconv/peb_lookup.h"
-#include <iostream>
+#include <peconv/peb_lookup.h>
 
-class PEBFastLocker {
+class SectionLocker {
 public:
-    PEBFastLocker(PEB &_peb)
-        : peb(_peb)
+    SectionLocker(RTL_CRITICAL_SECTION &_section)
+        : section(_section)
     {
-        RtlEnterCriticalSection(peb.FastPebLock);
+        RtlEnterCriticalSection(&section);
     }
 
-    ~PEBFastLocker()
+    ~SectionLocker()
     {
-        RtlLeaveCriticalSection(peb.FastPebLock);
+        RtlLeaveCriticalSection(&section);
     }
 
 protected:
-    PEB &peb;
+    RTL_CRITICAL_SECTION &section;
 };
-
-class PEBLoaderLocker {
-public:
-    PEBLoaderLocker(PEB &_peb)
-        : peb(_peb)
-    {
-        RtlEnterCriticalSection(peb.LoaderLock);
-    }
-
-    ~PEBLoaderLocker()
-    {
-        RtlLeaveCriticalSection(peb.LoaderLock);
-}
-
-protected:
-    PEB & peb;
-};
-
 
 //here we don't want to use any functions imported form extenal modules
 
@@ -122,7 +100,7 @@ HMODULE peconv::get_module_via_peb(IN OPTIONAL LPWSTR module_name)
     if (!peb) {
         return NULL;
     }
-    PEBLoaderLocker locker(*peb);
+    SectionLocker locker(*peb->LoaderLock);
     LIST_ENTRY head = peb->Ldr->InLoadOrderModuleList;
 
     const PLDR_MODULE first_module = *((PLDR_MODULE *)(&head));
@@ -151,9 +129,9 @@ size_t peconv::get_module_size_via_peb(IN OPTIONAL HMODULE hModule)
 {
     PPEB peb = get_peb();
     if (!peb) {
-        return NULL;
+        return 0;
     }
-    PEBLoaderLocker locker(*peb);
+    SectionLocker locker(*peb->LoaderLock);
     LIST_ENTRY head = peb->Ldr->InLoadOrderModuleList;
 
     const PLDR_MODULE first_module = *((PLDR_MODULE *)(&head));
@@ -184,7 +162,7 @@ bool peconv::set_main_module_in_peb(HMODULE module_ptr)
     if (peb == NULL) {
         return false;
     }
-    PEBFastLocker locker(*peb);
+    SectionLocker locker(*peb->FastPebLock);
     peb->ImageBaseAddress = module_ptr;
     return true;
 }
@@ -195,6 +173,6 @@ HMODULE peconv::get_main_module_via_peb()
     if (peb == NULL) {
         return NULL;
     }
-    PEBFastLocker locker(*peb);
+    SectionLocker locker(*peb->FastPebLock);
     return (HMODULE) peb->ImageBaseAddress;
 }

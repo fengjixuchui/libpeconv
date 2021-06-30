@@ -151,10 +151,6 @@ bool is_valid_export_table(IMAGE_EXPORT_DIRECTORY* exp, HMODULE modulePtr, const
 
     for (DWORD i = 0; i < funcCount; i++) {
         DWORD* recordRVA = (DWORD*)(funcsListRVA + (BYTE*)modulePtr + i * sizeof(DWORD));
-        if (*recordRVA == 0) {
-            //skip if the function RVA is 0 (empty export)
-            continue;
-        }
         if (!peconv::validate_ptr(modulePtr, module_size, recordRVA, sizeof(DWORD))) {
             return false;
         }

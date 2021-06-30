@@ -1,4 +1,7 @@
 #include "peconv/util.h"
+#include <iostream>
+
+#define USE_OLD_BADPTR
 
 namespace peconv {
     DWORD(WINAPI *g_GetProcessId)(IN HANDLE Process) = nullptr;
@@ -99,43 +102,57 @@ bool peconv::is_padding(const BYTE *cave_ptr, size_t cave_size, const BYTE paddi
     return true;
 }
 
-bool peconv::is_bad_read_ptr(LPCVOID areaStart, SIZE_T areaSize)
+bool peconv::is_mem_accessible(LPCVOID areaStart, SIZE_T areaSize, DWORD dwAccessRights)
 {
-    if (!areaSize) return false;
-    return IsBadReadPtr(areaStart, areaSize);
+    if (!areaSize) return false; // zero-sized areas are not allowed
 
-    //TODO: rework it
-    /*const DWORD dwForbiddenArea = PAGE_GUARD | PAGE_NOACCESS;
-    const DWORD dwReadRights = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    const DWORD dwForbiddenArea = PAGE_GUARD | PAGE_NOACCESS;
 
     MEMORY_BASIC_INFORMATION mbi = { 0 };
+    const size_t mbiSize = sizeof(MEMORY_BASIC_INFORMATION);
+
     SIZE_T sizeToCheck = areaSize;
     LPCVOID areaPtr = areaStart;
-    bool isOk = false;
 
     while (sizeToCheck > 0) {
         //reset area
-        memset(&mbi, 0, sizeof(MEMORY_BASIC_INFORMATION));
+        memset(&mbi, 0, mbiSize);
 
         // query the next area
-        if (!VirtualQuery(areaPtr, &mbi, sizeof(MEMORY_BASIC_INFORMATION))) {
-            return false;
+        if (VirtualQuery(areaPtr, &mbi, mbiSize) != mbiSize) {
+            return false; // could not query the area, assume it is bad
         }
         // check the privileges
-        isOk = (mbi.State & MEM_COMMIT) // memory allocated and
+        bool isOk = (mbi.State & MEM_COMMIT) // memory allocated and
             && !(mbi.Protect & dwForbiddenArea) // access to page allowed and
-            && (mbi.Protect & dwReadRights); // the required rights
-        if (!isOk) return false;
-
+            && (mbi.Protect & dwAccessRights); // the required rights
+        if (!isOk) {
+            return false; //invalid access
+        }
         SIZE_T offset = (ULONG_PTR)areaPtr - (ULONG_PTR)mbi.BaseAddress;
         SIZE_T queriedSize = mbi.RegionSize - offset;
         if (queriedSize >= sizeToCheck) {
-            return true;
+            return true; // is is fine
         }
         // move to the next region
         sizeToCheck -= queriedSize;
         areaPtr = LPCVOID((ULONG_PTR)areaPtr + queriedSize);
     }
-    return isOk;*/
+    // by default assume it is inaccessible
+    return false;
+}
 
+bool peconv::is_bad_read_ptr(LPCVOID areaStart, SIZE_T areaSize)
+{
+#ifdef USE_OLD_BADPTR // classic IsBadReadPtr is much faster than the version using VirtualQuery
+    return IsBadReadPtr(areaStart, areaSize);
+#else
+    const DWORD dwReadRights = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    bool isAccessible = peconv::is_mem_accessible(areaStart, areaSize, dwReadRights);
+    if (isAccessible) {
+        // the area has read access rights: not a bad read pointer
+        return false;
+    }
+    return true;
+#endif
 }
